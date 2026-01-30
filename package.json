@@ -1,6 +1,6 @@
 {
   "name": "wandb-viewer",
-  "displayName": "W&B Run Viewer",
+  "displayName": "Bread Wandb Viewer",
   "description": "View Weights & Biases run metrics and logs directly in VS Code",
   "version": "0.1.0",
   "publisher": "bread-tech",
@@ -30,7 +30,7 @@
     "customEditors": [
       {
         "viewType": "wandb-viewer.wandbFile",
-        "displayName": "W&B Run Viewer",
+        "displayName": "Bread Wandb Viewer",
         "selector": [
           {
             "filenamePattern": "*.wandb"
