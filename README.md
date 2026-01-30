@@ -2,7 +2,7 @@
 
 View your Weights & Biases training runs locally without leaving VS Code.
 
-![W&B Viewer Screenshot](https://raw.githubusercontent.com/YOUR-USERNAME/wandb-viewer/main/screenshot.png)
+![W&B Viewer Screenshot](https://raw.githubusercontent.com/Bread-Technologies/bread_wandb_viewer_extension/main/screenshot.png)
 
 ## Why?
 

@@ -3,11 +3,11 @@
   "displayName": "W&B Run Viewer",
   "description": "View Weights & Biases run metrics and logs directly in VS Code",
   "version": "0.1.0",
-  "publisher": "YOUR-PUBLISHER-NAME",
+  "publisher": "bread-tech",
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/YOUR-USERNAME/wandb-viewer"
+    "url": "https://github.com/Bread-Technologies/bread_wandb_viewer_extension"
   },
   "engines": {
     "vscode": "^1.74.0"
