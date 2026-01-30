@@ -616,7 +616,7 @@ class WandbEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     <span id="smoothingValue">0</span>
                 </div>
                 <button id="resetZoomBtn" class="btn btn-small" onclick="resetZoom()" style="display: none;">Reset Zoom</button>
-                <span class="zoom-hint">Drag to zoom • Shift+drag to pan</span>
+                <span class="zoom-hint">Drag to zoom • Double-click to reset</span>
                 <button class="modal-close" onclick="closeFullscreen()">&times;</button>
             </div>
         </div>
@@ -751,11 +751,6 @@ class WandbEditorProvider implements vscode.CustomReadonlyEditorProvider {
                                     // Show reset button when zoomed
                                     document.getElementById('resetZoomBtn').style.display = 'block';
                                 }
-                            },
-                            pan: {
-                                enabled: true,
-                                mode: 'xy',
-                                modifierKey: 'shift'
                             }
                         }
                     },
