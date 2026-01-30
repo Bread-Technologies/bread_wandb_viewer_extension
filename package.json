@@ -2,7 +2,7 @@
   "name": "wandb-viewer",
   "displayName": "Bread Wandb Viewer",
   "description": "View Weights & Biases run metrics and logs directly in VS Code",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "bread-tech",
   "icon": "media/icon.png",
   "repository": {
@@ -21,12 +21,6 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "commands": [
-      {
-        "command": "wandb-viewer.viewRun",
-        "title": "View W&B Run"
-      }
-    ],
     "customEditors": [
       {
         "viewType": "wandb-viewer.wandbFile",
@@ -38,16 +32,7 @@
         ],
         "priority": "default"
       }
-    ],
-    "menus": {
-      "explorer/context": [
-        {
-          "command": "wandb-viewer.viewRun",
-          "when": "explorerResourceIsFolder",
-          "group": "navigation"
-        }
-      ]
-    }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
