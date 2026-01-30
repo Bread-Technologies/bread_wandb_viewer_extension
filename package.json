@@ -1,0 +1,66 @@
+{
+  "name": "wandb-viewer",
+  "displayName": "W&B Run Viewer",
+  "description": "View Weights & Biases run metrics and logs directly in VS Code",
+  "version": "0.1.0",
+  "publisher": "YOUR-PUBLISHER-NAME",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR-USERNAME/wandb-viewer"
+  },
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCustomEditor:wandb-viewer.wandbFile"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "wandb-viewer.viewRun",
+        "title": "View W&B Run"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "wandb-viewer.wandbFile",
+        "displayName": "W&B Run Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.wandb"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "wandb-viewer.viewRun",
+          "when": "explorerResourceIsFolder",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "dependencies": {
+    "protobufjs": "^7.2.6"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.74.0",
+    "typescript": "^5.0.0"
+  }
+}
