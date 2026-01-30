@@ -1,3 +1,8 @@
+// Derived from wandb_internal.proto
+// Copyright (c) 2021 Weights and Biases, Inc.
+// Licensed under MIT License
+// https://github.com/wandb/wandb
+
 syntax = "proto3";
 
 package wandb_internal;
