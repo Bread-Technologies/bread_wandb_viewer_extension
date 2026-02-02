@@ -1,0 +1,796 @@
+import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+import { MultiRunManager, MergedMetric } from './MultiRunManager';
+import { scanFolderForRuns, watchFolder, FileChangeEvent, RunScanResult } from './MultiRunScanner';
+import { getChartStyles, getChartScript, getModalHtml, getControlsBarHtml } from './chartTemplate';
+
+export class MultiRunViewerPanel {
+    public static currentPanel: MultiRunViewerPanel | undefined;
+    private readonly _panel: vscode.WebviewPanel;
+    private readonly _extensionUri: vscode.Uri;
+    private _disposables: vscode.Disposable[] = [];
+    private _manager: MultiRunManager;
+    private _folderWatcher: vscode.Disposable | null = null;
+    private _folderPath: string;
+
+    public static createOrShow(extensionUri: vscode.Uri, folderPath: string) {
+        if (MultiRunViewerPanel.currentPanel) {
+            MultiRunViewerPanel.currentPanel._panel.reveal(vscode.ViewColumn.One);
+            return;
+        }
+
+        const panel = vscode.window.createWebviewPanel(
+            'wandbMultiRunViewer',
+            'Bread Wandb Viewer',
+            vscode.ViewColumn.One,
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+            }
+        );
+
+        MultiRunViewerPanel.currentPanel = new MultiRunViewerPanel(panel, extensionUri, folderPath);
+    }
+
+    private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, folderPath: string) {
+        this._panel = panel;
+        this._extensionUri = extensionUri;
+        this._folderPath = folderPath;
+        this._manager = new MultiRunManager(folderPath);
+
+        this._update();
+        this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
+
+        this._panel.webview.onDidReceiveMessage(
+            message => {
+                switch (message.command) {
+                    case 'toggleRun':
+                        this._manager.toggleRun(message.runId);
+                        this._update();
+                        break;
+                    case 'selectAll':
+                        this._manager.selectAll();
+                        this._update();
+                        break;
+                    case 'deselectAll':
+                        this._manager.deselectAll();
+                        this._update();
+                        break;
+                    case 'refreshRuns':
+                        this._update();
+                        break;
+                }
+            },
+            null,
+            this._disposables
+        );
+
+        // Watch for file changes
+        this._folderWatcher = watchFolder(folderPath, (_event: FileChangeEvent) => {
+            this._update();
+        });
+    }
+
+    private async _update() {
+        const runs = await scanFolderForRuns(this._folderPath);
+
+        // Update manager with new runs
+        const currentRuns = new Set(this._manager.getRuns().map(r => r.runId));
+        const newRuns = new Set(runs.map(r => r.runId));
+
+        // Add new runs
+        for (const run of runs) {
+            if (!currentRuns.has(run.runId)) {
+                this._manager.addRun(run);
+            }
+        }
+
+        // Remove deleted runs
+        for (const existingRun of this._manager.getRuns()) {
+            if (!newRuns.has(existingRun.runId)) {
+                this._manager.removeRun(existingRun.runId);
+            }
+        }
+
+        // Parse selected runs and merge metrics
+        await this._manager.parseSelectedRuns();
+        const selectedRunIds = this._manager.getSelectedRunIds();
+        const mergedMetrics = this._manager.mergeMetrics();
+
+        // Load logo
+        const logoPath = path.join(this._extensionUri.fsPath, 'media', 'bread_alpha.png');
+        let logoBase64 = '';
+        if (fs.existsSync(logoPath)) {
+            logoBase64 = fs.readFileSync(logoPath).toString('base64');
+        }
+
+        this._panel.webview.html = this._getHtmlContent(runs, selectedRunIds, mergedMetrics, logoBase64);
+    }
+
+    private _getHtmlContent(
+        runs: RunScanResult[],
+        selectedRunIds: string[],
+        mergedMetrics: { training: MergedMetric[], system: MergedMetric[] },
+        logoBase64: string
+    ): string {
+        const selectedSet = new Set(selectedRunIds);
+        const selectedRuns = runs.filter(run => selectedSet.has(run.runId));
+
+        // Generate sidebar run list
+        const runListHtml = runs.map(run => {
+            const isSelected = selectedSet.has(run.runId);
+            const color = this._manager.getRunColor(run.runId);
+            return `
+                <div class="run-item">
+                    <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleRun('${run.runId}')">
+                    <div class="run-color" style="background: ${color}"></div>
+                    <div class="run-info">
+                        <div class="run-name">${this._escapeHtml(run.runName)}</div>
+                        <div class="run-meta">ID: ${this._escapeHtml(run.runId)}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // Generate metadata HTML
+        const metadataHtml = selectedRuns.map(run => {
+            const parsedData = this._manager.getParsedData(run.runId);
+            const config = parsedData?.config || {};
+            const configEntries = Object.entries(config);
+
+            return `
+                <div class="metadata-section">
+                    <div class="metadata-header" onclick="toggleMetadata('${run.runId}')">
+                        <span class="metadata-run-name">${this._escapeHtml(run.runName)}</span>
+                        <span class="metadata-toggle">▼</span>
+                    </div>
+                    <div class="metadata-content">
+                        ${configEntries.length > 0 ? `
+                            <div class="config-grid">
+                                ${configEntries.map(([key, value]) => `
+                                    <div class="config-item">
+                                        <span class="config-key">${this._escapeHtml(key)}:</span>
+                                        <span class="config-value">${this._escapeHtml(String(value))}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : '<div class="no-config">No configuration data</div>'}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bread Wandb Viewer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <style>
+        ${this._getPageStyles()}
+        ${getChartStyles()}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <button class="expand-btn" id="expandBtn" onclick="toggleSidebar()">▶</button>
+        <button class="collapse-btn" id="collapseBtn" onclick="toggleSidebar()">◀</button>
+
+        <div class="sidebar" id="sidebar">
+            <div class="resize-handle" id="resizeHandle"></div>
+
+            <div class="sidebar-header">
+                <h3>Runs (${runs.length})</h3>
+                <div class="sidebar-controls">
+                    <button class="btn-icon" onclick="selectAllRuns()" title="Select All">☑</button>
+                    <button class="btn-icon" onclick="deselectAllRuns()" title="Deselect All">☐</button>
+                    <button class="btn-icon" onclick="refreshRuns()" title="Refresh">⟳</button>
+                </div>
+            </div>
+
+            <div class="sidebar-tabs">
+                <button class="sidebar-tab active" data-sidebar-tab="runs" onclick="switchSidebarTab('runs')">Runs</button>
+                <button class="sidebar-tab" data-sidebar-tab="metadata" onclick="switchSidebarTab('metadata')">Metadata</button>
+            </div>
+
+            <div class="sidebar-content active" id="runsContent">
+                ${runListHtml}
+            </div>
+
+            <div class="sidebar-content" id="metadataContent">
+                ${metadataHtml || '<div class="no-data">Select runs to view metadata</div>'}
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="controls-bar-wrapper">
+                ${logoBase64 ? `<img src="data:image/png;base64,${logoBase64}" alt="Bread Logo" class="logo">` : ''}
+                ${getControlsBarHtml()}
+            </div>
+
+            <div class="tabs">
+                <button class="tab active" data-tab="training">Training Metrics</button>
+                <button class="tab" data-tab="system">System Metrics</button>
+            </div>
+
+            <div id="training" class="tab-content active">
+                ${this._generateMetricsHtml(mergedMetrics.training, 'training')}
+            </div>
+
+            <div id="system" class="tab-content">
+                ${this._generateMetricsHtml(mergedMetrics.system, 'system')}
+            </div>
+        </div>
+    </div>
+
+    ${getModalHtml()}
+
+    <script>
+        ${getChartScript()}
+        ${this._generateChartInitScript(mergedMetrics)}
+    </script>
+</body>
+</html>`;
+    }
+
+    private _generateMetricsHtml(metrics: MergedMetric[], type: string): string {
+        if (metrics.length === 0) {
+            return '<div class="no-data">No metrics found</div>';
+        }
+
+        // Group metrics by their prefix (like single-run viewer)
+        const groups = this._groupMetrics(metrics);
+
+        return groups.map(group => `
+            <div class="metric-group">
+                <h3>${group.name}</h3>
+                <div class="charts-grid">
+                    ${group.metrics.map(metric => `
+                        <div class="chart-container">
+                            <div class="chart-header">
+                                <div class="chart-title">${this._escapeHtml(metric.metricName)}</div>
+                                <button class="btn-small" onclick="openFullscreen(${metric.index}, '${type}')">⛶</button>
+                            </div>
+                            <div class="chart-wrapper">
+                                <canvas id="chart-${type}-${metric.index}"></canvas>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `).join('');
+    }
+
+    private _groupMetrics(metrics: MergedMetric[]): Array<{ name: string, metrics: Array<MergedMetric & { index: number }> }> {
+        const groups: { [key: string]: Array<MergedMetric & { index: number }> } = {};
+
+        metrics.forEach((metric, index) => {
+            const groupName = this._extractGroupName(metric.metricName);
+            if (!groups[groupName]) {
+                groups[groupName] = [];
+            }
+            groups[groupName].push({ ...metric, index });
+        });
+
+        // Sort groups by priority
+        const sortedGroupNames = Object.keys(groups).sort((a, b) => {
+            const priority = ['loss', 'accuracy', 'lr', 'optim', 'perf', 'time', 'step'];
+            const aIdx = priority.findIndex(p => a.toLowerCase().startsWith(p));
+            const bIdx = priority.findIndex(p => b.toLowerCase().startsWith(p));
+
+            if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+            if (aIdx !== -1) return -1;
+            if (bIdx !== -1) return 1;
+
+            const aIsGpu = a.toLowerCase().startsWith('gpu');
+            const bIsGpu = b.toLowerCase().startsWith('gpu');
+            if (aIsGpu && bIsGpu) return a.localeCompare(b);
+            if (aIsGpu) return 1;
+            if (bIsGpu) return 1;
+
+            return a.localeCompare(b);
+        });
+
+        return sortedGroupNames.map(name => ({
+            name,
+            metrics: groups[name]
+        }));
+    }
+
+    private _extractGroupName(key: string): string {
+        if (key.includes('/')) {
+            return key.split('/')[0];
+        }
+
+        if (key.includes('.')) {
+            const parts = key.split('.');
+            if (parts[0] === 'gpu' && parts.length >= 3) {
+                return `gpu.${parts[1]}`;
+            }
+            return parts[0];
+        }
+
+        if (key.includes('_')) {
+            const parts = key.split('_');
+            const commonPrefixes = ['train', 'val', 'test', 'eval'];
+            if (commonPrefixes.includes(parts[0])) {
+                return parts[0];
+            }
+        }
+
+        return key;
+    }
+
+    private _generateChartInitScript(mergedMetrics: { training: MergedMetric[], system: MergedMetric[] }): string {
+        return `
+            const vscode = acquireVsCodeApi();
+            const trainingMetrics = ${JSON.stringify(mergedMetrics.training)};
+            const systemMetrics = ${JSON.stringify(mergedMetrics.system)};
+
+            // Sidebar resizing
+            let isResizing = false;
+            const resizeHandle = document.getElementById('resizeHandle');
+            const sidebar = document.getElementById('sidebar');
+            const collapseBtn = document.getElementById('collapseBtn');
+
+            function updateCollapseButtonPosition() {
+                const sidebarWidth = sidebar.getBoundingClientRect().width;
+                if (sidebarWidth > 0) {
+                    collapseBtn.style.left = (sidebarWidth - 10) + 'px';
+                }
+            }
+
+            resizeHandle.addEventListener('mousedown', (e) => {
+                isResizing = true;
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isResizing) return;
+                const newWidth = e.clientX;
+                if (newWidth >= 200 && newWidth <= 600) {
+                    sidebar.style.flex = '0 0 ' + newWidth + 'px';
+                    updateCollapseButtonPosition();
+                }
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (isResizing) {
+                    isResizing = false;
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                }
+            });
+
+            // Initialize button position
+            updateCollapseButtonPosition();
+
+            // Sidebar collapse/expand
+            function toggleSidebar() {
+                sidebar.classList.toggle('collapsed');
+                const collapseBtn = document.getElementById('collapseBtn');
+                const expandBtn = document.getElementById('expandBtn');
+                if (sidebar.classList.contains('collapsed')) {
+                    collapseBtn.style.display = 'none';
+                    expandBtn.style.display = 'block';
+                } else {
+                    collapseBtn.style.display = 'block';
+                    expandBtn.style.display = 'none';
+                }
+            }
+
+            // Sidebar tab switching
+            function switchSidebarTab(tab) {
+                const tabs = document.querySelectorAll('.sidebar-tab');
+                const contents = document.querySelectorAll('.sidebar-content');
+
+                tabs.forEach(t => t.classList.remove('active'));
+                contents.forEach(c => c.classList.remove('active'));
+
+                document.querySelector('[data-sidebar-tab="' + tab + '"]').classList.add('active');
+                document.getElementById(tab + 'Content').classList.add('active');
+            }
+
+            // Metadata toggling
+            function toggleMetadata(runId) {
+                const header = document.querySelector("[onclick=\\"toggleMetadata('" + runId + "')\\"");
+                const section = header.parentElement;
+                section.classList.toggle('collapsed');
+            }
+
+            // Run selection
+            function toggleRun(runId) {
+                vscode.postMessage({ command: 'toggleRun', runId });
+            }
+
+            function selectAllRuns() {
+                vscode.postMessage({ command: 'selectAll' });
+            }
+
+            function deselectAllRuns() {
+                vscode.postMessage({ command: 'deselectAll' });
+            }
+
+            function refreshRuns() {
+                vscode.postMessage({ command: 'refreshRuns' });
+            }
+
+            // Fullscreen modal
+            function openFullscreen(metricIndex, type) {
+                const metrics = type === 'training' ? trainingMetrics : systemMetrics;
+                const metric = metrics[metricIndex];
+                if (!metric) return;
+
+                document.getElementById('modalTitle').textContent = metric.metricName;
+                document.getElementById('fullscreenModal').classList.add('active');
+                document.body.classList.add('modal-open');
+
+                document.getElementById('modalSmoothing').value = 0;
+                document.getElementById('modalSmoothingValue').textContent = '0.00';
+                modalLogX = false;
+                modalLogY = false;
+                document.getElementById('modalLogXBtn').classList.remove('active');
+                document.getElementById('modalLogYBtn').classList.remove('active');
+
+                if (modalChart) modalChart.destroy();
+
+                const ctx = document.getElementById('modalChart');
+                const datasets = metric.datasets.map(dataset => ({
+                    label: dataset.runName,
+                    data: dataset.data.map(d => ({ x: d.step, y: d.value })),
+                    borderColor: dataset.color,
+                    backgroundColor: dataset.color + '20',
+                    fill: true,
+                    tension: 0.1,
+                    pointRadius: dataset.data.length > 100 ? 0 : 3,
+                    pointHoverRadius: 5,
+                    borderWidth: 2,
+                    _originalData: dataset.data.map(d => ({ x: d.step, y: d.value })),
+                    _originalColor: dataset.color,
+                    _runName: dataset.runName,
+                    _isOriginal: true
+                }));
+
+                modalChart = createUnifiedChart(ctx, datasets, metric.metricName, { isModal: true, enableZoom: true });
+            }
+
+            // Initialize charts
+            function initCharts(metrics, type) {
+                metrics.forEach((metric, index) => {
+                    const canvasId = 'chart-' + type + '-' + index;
+                    const ctx = document.getElementById(canvasId);
+                    if (!ctx) return;
+
+                    const datasets = metric.datasets.map(dataset => ({
+                        label: dataset.runName,
+                        data: dataset.data.map(d => ({ x: d.step, y: d.value })),
+                        borderColor: dataset.color,
+                        backgroundColor: dataset.color + '20',
+                        fill: true,
+                        tension: 0.1,
+                        pointRadius: dataset.data.length > 50 ? 0 : 2,
+                        pointHoverRadius: 4,
+                        borderWidth: 2,
+                        _originalData: dataset.data.map(d => ({ x: d.step, y: d.value })),
+                        _originalColor: dataset.color,
+                        _runName: dataset.runName,
+                        _isOriginal: true
+                    }));
+
+                    chartInstances[canvasId] = createUnifiedChart(ctx, datasets, metric.metricName, {
+                        isModal: false,
+                        enableZoom: false
+                    });
+                });
+            }
+
+            initCharts(trainingMetrics, 'training');
+            initCharts(systemMetrics, 'system');
+        `;
+    }
+
+    private _getPageStyles(): string {
+        return `
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body {
+                font-family: var(--vscode-font-family);
+                color: var(--vscode-foreground);
+                background: var(--vscode-editor-background);
+                height: 100vh;
+                overflow: hidden;
+            }
+            .container {
+                display: flex;
+                height: 100vh;
+                position: relative;
+                overflow: hidden;
+            }
+
+            /* Sidebar */
+            .sidebar {
+                flex: 0 0 280px;
+                background: var(--vscode-sideBar-background);
+                border-right: 1px solid var(--vscode-panel-border);
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                position: relative;
+            }
+            .sidebar.collapsed {
+                flex: 0 0 0 !important;
+                min-width: 0;
+            }
+            .resize-handle {
+                position: absolute;
+                right: 0;
+                top: 0;
+                bottom: 0;
+                width: 4px;
+                cursor: col-resize;
+                background: transparent;
+            }
+            .resize-handle:hover {
+                background: var(--vscode-focusBorder);
+            }
+            .sidebar-header {
+                padding: 15px;
+                border-bottom: 1px solid var(--vscode-panel-border);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            .sidebar-header h3 {
+                font-size: 1em;
+                font-weight: 600;
+                margin: 0;
+            }
+            .controls-bar-wrapper {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding-left: 15px;
+            }
+            .controls-bar-wrapper .logo {
+                width: 28px;
+                height: 28px;
+                object-fit: contain;
+                flex-shrink: 0;
+            }
+            .sidebar-controls {
+                display: flex;
+                gap: 5px;
+            }
+            .btn-icon {
+                background: transparent;
+                border: 1px solid var(--vscode-button-border);
+                color: var(--vscode-button-foreground);
+                padding: 4px 8px;
+                cursor: pointer;
+                border-radius: 3px;
+                font-size: 0.9em;
+            }
+            .btn-icon:hover {
+                background: var(--vscode-button-hoverBackground);
+            }
+            .sidebar-tabs {
+                display: flex;
+                border-bottom: 1px solid var(--vscode-panel-border);
+            }
+            .sidebar-tab {
+                flex: 1;
+                padding: 8px;
+                text-align: center;
+                cursor: pointer;
+                background: transparent;
+                border: none;
+                color: var(--vscode-tab-inactiveForeground);
+                border-bottom: 2px solid transparent;
+                font-size: 0.85em;
+            }
+            .sidebar-tab:hover {
+                color: var(--vscode-tab-activeForeground);
+            }
+            .sidebar-tab.active {
+                color: var(--vscode-tab-activeForeground);
+                border-bottom-color: var(--vscode-tab-activeBorder);
+            }
+            .sidebar-content {
+                flex: 1;
+                overflow-y: auto;
+                padding: 10px;
+                display: none;
+            }
+            .sidebar-content.active {
+                display: block;
+            }
+            .run-item {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 8px;
+                margin-bottom: 4px;
+                border-radius: 4px;
+                cursor: pointer;
+            }
+            .run-item:hover {
+                background: var(--vscode-list-hoverBackground);
+            }
+            .run-item input[type="checkbox"] {
+                width: 16px;
+                height: 16px;
+                cursor: pointer;
+                accent-color: var(--vscode-checkbox-background);
+            }
+            .run-color {
+                width: 12px;
+                height: 12px;
+                border-radius: 2px;
+            }
+            .run-info {
+                flex: 1;
+                min-width: 0;
+            }
+            .run-name {
+                font-size: 0.85em;
+                font-weight: 500;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .run-meta {
+                font-size: 0.7em;
+                color: var(--vscode-descriptionForeground);
+            }
+            .metadata-section {
+                margin-bottom: 8px;
+                border-radius: 4px;
+                background: var(--vscode-editor-inactiveSelectionBackground);
+            }
+            .metadata-header {
+                padding: 10px;
+                cursor: pointer;
+                display: flex;
+                justify-content: space-between;
+                font-size: 0.85em;
+            }
+            .metadata-header:hover {
+                background: var(--vscode-list-hoverBackground);
+            }
+            .metadata-run-name {
+                font-weight: 600;
+            }
+            .metadata-toggle {
+                transition: transform 0.2s;
+            }
+            .metadata-section.collapsed .metadata-toggle {
+                transform: rotate(-90deg);
+            }
+            .metadata-content {
+                max-height: 300px;
+                overflow-y: auto;
+                border-top: 1px solid var(--vscode-panel-border);
+            }
+            .metadata-section.collapsed .metadata-content {
+                display: none;
+            }
+            .config-grid {
+                padding: 10px;
+            }
+            .config-item {
+                padding: 4px 0;
+                font-size: 0.8em;
+            }
+            .config-key {
+                color: var(--vscode-symbolIcon-variableForeground);
+                font-weight: 600;
+            }
+            .config-value {
+                color: var(--vscode-foreground);
+                margin-left: 8px;
+            }
+            .no-config, .no-data {
+                padding: 15px;
+                text-align: center;
+                color: var(--vscode-descriptionForeground);
+                font-size: 0.8em;
+            }
+
+            /* Collapse buttons */
+            .collapse-btn, .expand-btn {
+                position: fixed;
+                top: 50%;
+                transform: translateY(-50%);
+                background: var(--vscode-button-background);
+                color: var(--vscode-button-foreground);
+                border: none;
+                padding: 8px 6px;
+                cursor: pointer;
+                z-index: 100;
+                border-radius: 3px;
+                font-size: 12px;
+            }
+            .collapse-btn {
+                left: 270px;
+            }
+            .expand-btn {
+                left: 10px;
+                display: none;
+            }
+
+            /* Main content */
+            .main-content {
+                flex: 1;
+                overflow-y: auto;
+                padding: 20px;
+            }
+            .metric-group {
+                margin-bottom: 30px;
+            }
+            .metric-group h3 {
+                font-size: 1.1em;
+                font-weight: 600;
+                margin-bottom: 15px;
+                color: var(--vscode-foreground);
+            }
+            .tabs {
+                display: flex;
+                gap: 10px;
+                margin-bottom: 20px;
+                border-bottom: 1px solid var(--vscode-panel-border);
+            }
+            .tab {
+                background: transparent;
+                border: none;
+                border-bottom: 2px solid transparent;
+                color: var(--vscode-tab-inactiveForeground);
+                padding: 10px 20px;
+                cursor: pointer;
+                font-size: 0.9em;
+            }
+            .tab:hover {
+                color: var(--vscode-tab-activeForeground);
+            }
+            .tab.active {
+                color: var(--vscode-tab-activeForeground);
+                border-bottom-color: var(--vscode-tab-activeBorder);
+            }
+            .tab-content {
+                display: none;
+            }
+            .tab-content.active {
+                display: block;
+            }
+        `;
+    }
+
+    private _escapeHtml(text: string): string {
+        return text.replace(/[&<>"']/g, (char) => {
+            const entities: { [key: string]: string } = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            };
+            return entities[char] || char;
+        });
+    }
+
+    public dispose() {
+        MultiRunViewerPanel.currentPanel = undefined;
+        this._panel.dispose();
+        if (this._folderWatcher) {
+            this._folderWatcher.dispose();
+        }
+        while (this._disposables.length) {
+            const disposable = this._disposables.pop();
+            if (disposable) {
+                disposable.dispose();
+            }
+        }
+    }
+}

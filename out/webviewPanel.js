@@ -447,73 +447,72 @@ class WandbViewerPanel {
 }
 exports.WandbViewerPanel = WandbViewerPanel;
 function groupMetrics(metrics) {
+    // Extract group name from the metric's natural hierarchy - NO HARDCODING
     const groups = {};
     for (const [key, values] of Object.entries(metrics)) {
         if (!values || values.length === 0)
             continue;
-        // Determine group based on metric name
-        let groupName = 'Other';
-        if (key.includes('loss') || key.includes('Loss')) {
-            groupName = 'Loss';
-        }
-        else if (key.includes('lr') || key.includes('learning_rate')) {
-            groupName = 'Learning Rate';
-        }
-        else if (key.includes('accuracy') || key.includes('acc') || key.includes('Accuracy')) {
-            groupName = 'Accuracy';
-        }
-        else if (key.includes('tflops') || key.includes('throughput') || key.includes('speed')) {
-            groupName = 'Performance';
-        }
-        else if (key.includes('time') || key.includes('Time')) {
-            groupName = 'Timing';
-        }
-        else if (key.includes('epoch') || key.includes('step') || key.includes('iter')) {
-            groupName = 'Progress';
-        }
-        else if (key.startsWith('gpu.')) {
-            // Extract GPU number
-            const gpuMatch = key.match(/gpu\.(\d+)\./);
-            groupName = gpuMatch ? `GPU ${gpuMatch[1]}` : 'GPU';
-        }
-        else if (key.includes('memory') || key.includes('Memory') || key.includes('MA ') || key.includes('NV ')) {
-            groupName = 'Memory';
-        }
-        else if (key.includes('grad') || key.includes('Grad')) {
-            groupName = 'Gradients';
-        }
-        else if (key.startsWith('disk.') || key.startsWith('network.') || key.startsWith('proc.')) {
-            groupName = 'System';
-        }
-        else if (key.includes('seqlen') || key.includes('batch') || key.includes('Batch')) {
-            groupName = 'Data';
-        }
+        const groupName = extractGroupName(key);
         if (!groups[groupName]) {
             groups[groupName] = {};
         }
         groups[groupName][key] = values;
     }
-    // Convert to array and sort
+    // Sort groups: alphabetically, but with common training metrics first
     const result = [];
-    const priorityOrder = ['Loss', 'Accuracy', 'Learning Rate', 'Performance', 'Timing', 'Memory', 'Progress', 'Data', 'Gradients'];
-    // Add groups in priority order
-    for (const name of priorityOrder) {
-        if (groups[name]) {
-            result.push({ name, metrics: groups[name] });
-            delete groups[name];
-        }
-    }
-    // Add GPU groups in order
-    const gpuGroups = Object.keys(groups).filter(k => k.startsWith('GPU')).sort();
-    for (const name of gpuGroups) {
+    const allGroupNames = Object.keys(groups).sort((a, b) => {
+        // Priority groups come first (if they exist)
+        const priority = ['loss', 'accuracy', 'lr', 'optim', 'perf', 'time', 'step'];
+        const aIdx = priority.findIndex(p => a.toLowerCase().startsWith(p));
+        const bIdx = priority.findIndex(p => b.toLowerCase().startsWith(p));
+        if (aIdx !== -1 && bIdx !== -1)
+            return aIdx - bIdx;
+        if (aIdx !== -1)
+            return -1;
+        if (bIdx !== -1)
+            return 1;
+        // GPU groups come after priority groups but before others
+        const aIsGpu = a.toLowerCase().startsWith('gpu');
+        const bIsGpu = b.toLowerCase().startsWith('gpu');
+        if (aIsGpu && bIsGpu)
+            return a.localeCompare(b);
+        if (aIsGpu)
+            return 1;
+        if (bIsGpu)
+            return 1;
+        return a.localeCompare(b);
+    });
+    for (const name of allGroupNames) {
         result.push({ name, metrics: groups[name] });
-        delete groups[name];
-    }
-    // Add remaining groups
-    for (const [name, metrics] of Object.entries(groups)) {
-        result.push({ name, metrics });
     }
     return result;
+}
+function extractGroupName(key) {
+    // Handle hierarchical names with / (e.g., "loss/mean" -> "loss")
+    if (key.includes('/')) {
+        return key.split('/')[0];
+    }
+    // Handle dot-separated names (e.g., "gpu.0.memory" -> "gpu.0")
+    if (key.includes('.')) {
+        const parts = key.split('.');
+        // For gpu.X.metric, group by gpu.X
+        if (parts[0] === 'gpu' && parts.length >= 3) {
+            return `gpu.${parts[1]}`;
+        }
+        // For other dot-separated names, use first component
+        return parts[0];
+    }
+    // Handle underscore-separated names with common prefixes
+    // e.g., "train_loss" -> "train", "val_accuracy" -> "val"
+    if (key.includes('_')) {
+        const parts = key.split('_');
+        const commonPrefixes = ['train', 'val', 'test', 'eval'];
+        if (commonPrefixes.includes(parts[0])) {
+            return parts[0];
+        }
+    }
+    // For simple names without hierarchy, use the full name as the group
+    return key;
 }
 function generateMetricGroupsHtml(groups, prefix) {
     if (groups.length === 0) {
