@@ -1,44 +1,45 @@
-# W&B Run Viewer
+# Bread Wandb Viewer
 
-View your Weights & Biases training runs locally without leaving VS Code.
+Compare and visualize your Weights & Biases training runs locally without leaving VS Code.
 
-![W&B Viewer Screenshot](https://raw.githubusercontent.com/Bread-Technologies/bread_wandb_viewer_extension/main/screenshot.png)
+![Bread Wandb Viewer Screenshot](https://raw.githubusercontent.com/Bread-Technologies/bread_wandb_viewer_extension/main/screenshot.png)
 
 ## Why?
 
-I got tired of switching to my browser every time I wanted to check on a training run. This extension lets you open `.wandb` files directly and see your metrics as interactive charts.
+Switching to your browser to compare training runs is slow. This extension lets you view and compare multiple runs side-by-side with interactive charts, all from VS Code.
+
+## How to use
+
+**To compare multiple runs:**
+1. Right-click any folder containing W&B runs in the VS Code explorer
+2. Select "Bread Wandb Viewer"
+3. Select which runs to compare using the sidebar checkboxes
+
+**To view a single run:**
+- Click any `.wandb` file to open it directly
 
 ## Features
 
-- **Just click a .wandb file** - Opens automatically with the custom viewer
-- **Live updates** - Charts refresh as new data comes in during training
-- **Fullscreen mode** - Click the expand button on any chart
+- **Compare runs** - View multiple runs overlaid on the same charts
+- **Interactive selection** - Toggle runs on/off to compare different combinations
+- **Live updates** - Charts refresh automatically during training
+- **Fullscreen charts** - Click any chart to expand it
 - **Zoom & pan** - Drag to zoom, shift+drag to pan, double-click to reset
-- **EMA smoothing** - Adjustable smoothing slider in fullscreen mode
+- **EMA smoothing** - Adjustable smoothing with optional raw data overlay
 - **Grouped metrics** - Automatically organizes metrics by prefix (loss/, train/, etc.)
-
-## Usage
-
-1. Open any folder containing W&B run data
-2. Click on a `.wandb` file in the explorer
-3. That's it
-
-The viewer shows:
-- **Training Metrics** - Everything you logged with `wandb.log()`
-- **System Metrics** - GPU usage, memory, etc.
-- **Configuration** - Your run config and hyperparameters
+- **Metadata view** - Compare hyperparameters and config across runs
 
 ## Installation
 
-Install from the VS Code marketplace, or grab the `.vsix` from releases and run:
+Install from the VS Code marketplace, or download the `.vsix` from releases:
 
-```
-code --install-extension wandb-viewer-0.1.0.vsix
+```bash
+code --install-extension wandb-viewer-0.2.0.vsix
 ```
 
 ## Notes
 
-- This reads the binary `.wandb` files directly using protobuf - no wandb CLI or API needed
+- Reads binary `.wandb` files directly using protobuf - no wandb CLI or API needed
 - Works completely offline
 - Tested with wandb SDK 0.15+ file format
 
