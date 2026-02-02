@@ -34,7 +34,7 @@ Switching to your browser to compare training runs is slow. This extension lets 
 Install from the VS Code marketplace, or download the `.vsix` from releases:
 
 ```bash
-code --install-extension wandb-viewer-0.2.0.vsix
+code --install-extension wandb-viewer-0.2.1.vsix
 ```
 
 ## Notes
