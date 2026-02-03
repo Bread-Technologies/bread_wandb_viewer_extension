@@ -5,6 +5,7 @@
 import { MetricPoint } from '../wandbParser';
 import { MergedMetric } from '../MultiRunManager';
 import { MetricSummary } from './types';
+import { formatNumber, formatNumberForCSV } from './formatNumber';
 
 /**
  * Summarize a metric with statistics and trend detection
@@ -98,12 +99,10 @@ export function formatMetricSummary(
         return `- **${runName}**: No data\n`;
     }
 
-    const formatNum = (n: number) => n.toFixed(4).replace(/\.?0+$/, '');
-
-    return `- **${runName}**: initial=${formatNum(summary.initial)}, ` +
-           `final=${formatNum(summary.final)}, ` +
-           `min=${formatNum(summary.min)}, ` +
-           `max=${formatNum(summary.max)}, ` +
+    return `- **${runName}**: initial=${formatNumber(summary.initial)}, ` +
+           `final=${formatNumber(summary.final)}, ` +
+           `min=${formatNumber(summary.min)}, ` +
+           `max=${formatNumber(summary.max)}, ` +
            `trend=${summary.trend}\n`;
 }
 
@@ -133,7 +132,7 @@ export function generateCSV(mergedMetric: MergedMetric): string {
     for (const step of steps) {
         const values = mergedMetric.datasets.map(dataset => {
             const point = dataset.data.find(pt => pt.step === step);
-            return point ? point.value.toFixed(4) : '';
+            return point ? formatNumberForCSV(point.value) : '';
         });
         csv += `${step},${values.join(',')}\n`;
     }

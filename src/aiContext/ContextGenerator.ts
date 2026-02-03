@@ -7,6 +7,7 @@ import { RunScanResult } from '../MultiRunScanner';
 import { WandbRunData, WandbMetrics, MetricPoint } from '../wandbParser';
 import { compareConfigs, formatCommonParams, formatDifferences } from './ConfigDiffer';
 import { summarizeMetric, formatMetricSummary, generateCSV, groupMetricsByPrefix } from './MetricSummarizer';
+import { formatNumber } from './formatNumber';
 import * as path from 'path';
 
 /**
@@ -115,8 +116,7 @@ function getKeyMetricsSummary(metrics: WandbMetrics): string {
             const data = metrics[found];
             const initial = data[0].value;
             const final = data[data.length - 1].value;
-            const formatNum = (n: number) => n.toFixed(4).replace(/\.?0+$/, '');
-            keyMetrics.push(`${found}: ${formatNum(initial)} → ${formatNum(final)}`);
+            keyMetrics.push(`${found}: ${formatNumber(initial)} → ${formatNumber(final)}`);
         }
     }
 
@@ -373,10 +373,7 @@ function formatValue(value: any): string {
         return value.length > 50 ? `${value.substring(0, 47)}...` : value;
     }
     if (typeof value === 'number') {
-        if (Number.isInteger(value)) {
-            return value.toString();
-        }
-        return value.toFixed(4).replace(/\.?0+$/, '');
+        return formatNumber(value);
     }
     if (typeof value === 'boolean') {
         return value.toString();

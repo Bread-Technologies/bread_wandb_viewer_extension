@@ -4,6 +4,7 @@
 
 import { WandbConfig } from '../wandbParser';
 import { ConfigComparison } from './types';
+import { formatNumber } from './formatNumber';
 
 /**
  * Compare configurations across multiple runs
@@ -124,11 +125,7 @@ function formatValue(value: any): string {
         return value.length > 40 ? value.substring(0, 37) + '...' : value;
     }
     if (typeof value === 'number') {
-        // Format numbers with appropriate precision
-        if (Number.isInteger(value)) {
-            return value.toString();
-        }
-        return value.toFixed(4).replace(/\.?0+$/, '');
+        return formatNumber(value);
     }
     if (typeof value === 'boolean') {
         return value.toString();
