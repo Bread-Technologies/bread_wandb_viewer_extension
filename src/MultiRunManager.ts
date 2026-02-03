@@ -52,10 +52,8 @@ export class MultiRunManager {
             this.state.selectedRunIds.add(runResult.runId);
         }
 
-        // Assign color if not already assigned
-        if (!this.state.colorMap.has(runResult.runId)) {
-            this.assignColor(runResult.runId);
-        }
+        // Reassign colors for all runs to maintain consistency
+        this.reassignAllColors();
     }
 
     /**
@@ -142,7 +140,10 @@ export class MultiRunManager {
                 const run = this.state.runs.get(runId);
                 if (run) {
                     try {
+                        const parseStart = Date.now();
                         const parsed = parseWandbFile(run.filePath);
+                        const parseTime = Date.now() - parseStart;
+                        console.log(`  - Parsed run ${run.runName}: ${parseTime}ms (${Object.keys(parsed.metrics).length} metrics, ${Object.values(parsed.metrics).reduce((sum, m) => sum + m.length, 0)} data points)`);
                         this.state.parsedData.set(runId, parsed);
                         this.updateCacheAccess(runId);
                         this.evictIfNeeded();
@@ -237,14 +238,15 @@ export class MultiRunManager {
     }
 
     /**
-     * Assign color to a run deterministically
+     * Reassign colors to all runs based on sorted run IDs
+     * This ensures consistent color assignment regardless of discovery order
      */
-    private assignColor(runId: string): void {
-        // Get sorted list of run IDs for consistent color assignment
+    private reassignAllColors(): void {
         const sortedRunIds = Array.from(this.state.runs.keys()).sort();
-        const index = sortedRunIds.indexOf(runId);
-        const color = COLORS[index % COLORS.length];
-        this.state.colorMap.set(runId, color);
+        sortedRunIds.forEach((runId, index) => {
+            const color = COLORS[index % COLORS.length];
+            this.state.colorMap.set(runId, color);
+        });
     }
 
     /**

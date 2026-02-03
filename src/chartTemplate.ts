@@ -330,6 +330,9 @@ export function getChartScript(): string {
          * Create unified Chart.js chart
          */
         function createUnifiedChart(ctx, datasets, metricName, options = {}) {
+            // Calculate max dataset size for decimation
+            const maxPoints = Math.max(...datasets.map(d => d.data ? d.data.length : 0), 0);
+
             return new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -339,6 +342,14 @@ export function getChartScript(): string {
                     parsing: {
                         xAxisKey: 'x',
                         yAxisKey: 'y'
+                    },
+                    decimation: maxPoints > 500 ? {
+                        enabled: true,
+                        algorithm: 'lttb',
+                        samples: 250,
+                        threshold: 500
+                    } : {
+                        enabled: false
                     },
                     responsive: true,
                     maintainAspectRatio: false,

@@ -73,9 +73,15 @@ export class MultiRunViewerPanel {
     }
 
     private async _update() {
+        const overallStart = Date.now();
+        console.log('=== Multi-Run View Update Started ===');
+
+        const t1 = Date.now();
         const runs = await scanFolderForRuns(this._folderPath);
+        console.log(`[1] Folder scan: ${Date.now() - t1}ms (found ${runs.length} runs)`);
 
         // Update manager with new runs
+        const t2 = Date.now();
         const currentRuns = new Set(this._manager.getRuns().map(r => r.runId));
         const newRuns = new Set(runs.map(r => r.runId));
 
@@ -92,20 +98,36 @@ export class MultiRunViewerPanel {
                 this._manager.removeRun(existingRun.runId);
             }
         }
+        console.log(`[2] Run management: ${Date.now() - t2}ms`);
 
         // Parse selected runs and merge metrics
+        const t3 = Date.now();
         await this._manager.parseSelectedRuns();
+        console.log(`[3] Parsing runs: ${Date.now() - t3}ms (${this._manager.getSelectedRunIds().length} selected)`);
+
+        const t4 = Date.now();
         const selectedRunIds = this._manager.getSelectedRunIds();
         const mergedMetrics = this._manager.mergeMetrics();
+        console.log(`[4] Merge metrics: ${Date.now() - t4}ms (${mergedMetrics.training.length} training, ${mergedMetrics.system.length} system)`);
 
         // Load logo
+        const t5 = Date.now();
         const logoPath = path.join(this._extensionUri.fsPath, 'media', 'bread_alpha.png');
         let logoBase64 = '';
         if (fs.existsSync(logoPath)) {
             logoBase64 = fs.readFileSync(logoPath).toString('base64');
         }
+        console.log(`[5] Load logo: ${Date.now() - t5}ms`);
 
-        this._panel.webview.html = this._getHtmlContent(runs, selectedRunIds, mergedMetrics, logoBase64);
+        const t6 = Date.now();
+        const htmlContent = this._getHtmlContent(runs, selectedRunIds, mergedMetrics, logoBase64);
+        console.log(`[6] Generate HTML: ${Date.now() - t6}ms (${Math.round(htmlContent.length / 1024)}KB)`);
+
+        const t7 = Date.now();
+        this._panel.webview.html = htmlContent;
+        console.log(`[7] Set webview HTML: ${Date.now() - t7}ms`);
+
+        console.log(`=== Total Update Time: ${Date.now() - overallStart}ms ===\n`);
     }
 
     private _getHtmlContent(
@@ -255,7 +277,7 @@ export class MultiRunViewerPanel {
                                 <button class="btn-small" onclick="openFullscreen(${metric.index}, '${type}')">⛶</button>
                             </div>
                             <div class="chart-wrapper">
-                                <canvas id="chart-${type}-${metric.index}"></canvas>
+                                <canvas id="chart-${type}-${metric.index}" data-chart-type="${type}" data-chart-index="${metric.index}"></canvas>
                             </div>
                         </div>
                     `).join('')}
@@ -458,38 +480,68 @@ export class MultiRunViewerPanel {
                 modalChart = createUnifiedChart(ctx, datasets, metric.metricName, { isModal: true, enableZoom: true });
             }
 
-            // Initialize charts
-            function initCharts(metrics, type) {
-                metrics.forEach((metric, index) => {
-                    const canvasId = 'chart-' + type + '-' + index;
-                    const ctx = document.getElementById(canvasId);
-                    if (!ctx) return;
+            // Lazy chart initialization using IntersectionObserver
+            // Only creates charts when they become visible (huge performance win for 50+ charts)
+            const chartObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const canvas = entry.target;
+                        const canvasId = canvas.id;
 
-                    const datasets = metric.datasets.map(dataset => ({
-                        label: dataset.runName,
-                        data: dataset.data.map(d => ({ x: d.step, y: d.value })),
-                        borderColor: dataset.color,
-                        backgroundColor: dataset.color + '20',
-                        fill: true,
-                        tension: 0.1,
-                        pointRadius: dataset.data.length > 50 ? 0 : 2,
-                        pointHoverRadius: 4,
-                        borderWidth: 2,
-                        _originalData: dataset.data.map(d => ({ x: d.step, y: d.value })),
-                        _originalColor: dataset.color,
-                        _runName: dataset.runName,
-                        _isOriginal: true
-                    }));
+                        // Check if chart already exists
+                        if (chartInstances[canvasId]) return;
 
-                    chartInstances[canvasId] = createUnifiedChart(ctx, datasets, metric.metricName, {
-                        isModal: false,
-                        enableZoom: false
-                    });
+                        // Defer chart creation to next frame to avoid blocking render
+                        requestAnimationFrame(() => {
+                            // Get metric data from dataset attributes
+                            const type = canvas.dataset.chartType;
+                            const index = parseInt(canvas.dataset.chartIndex);
+                            const metrics = type === 'training' ? trainingMetrics : systemMetrics;
+                            const metric = metrics[index];
+
+                            if (!metric) return;
+
+                            // Create chart datasets
+                            const datasets = metric.datasets.map(dataset => ({
+                                label: dataset.runName,
+                                data: dataset.data.map(d => ({ x: d.step, y: d.value })),
+                                borderColor: dataset.color,
+                                backgroundColor: dataset.color + '20',
+                                fill: true,
+                                tension: 0.1,
+                                pointRadius: dataset.data.length > 50 ? 0 : 2,
+                                pointHoverRadius: 4,
+                                borderWidth: 2,
+                                _originalData: dataset.data.map(d => ({ x: d.step, y: d.value })),
+                                _originalColor: dataset.color,
+                                _runName: dataset.runName,
+                                _isOriginal: true
+                            }));
+
+                            // Create the chart
+                            chartInstances[canvasId] = createUnifiedChart(canvas, datasets, metric.metricName, {
+                                isModal: false,
+                                enableZoom: false
+                            });
+
+                            // Stop observing this chart
+                            chartObserver.unobserve(canvas);
+                        });
+                    }
                 });
-            }
+            }, {
+                rootMargin: '100px' // Start loading charts 100px before they enter viewport (conservative)
+            });
 
-            initCharts(trainingMetrics, 'training');
-            initCharts(systemMetrics, 'system');
+            // Defer observer setup to next frame so UI renders immediately
+            requestAnimationFrame(() => {
+                // Observe all chart canvases for lazy loading
+                document.querySelectorAll('canvas[id^="chart-"]').forEach(canvas => {
+                    chartObserver.observe(canvas);
+                });
+
+                console.log('Lazy chart rendering initialized for ' + (trainingMetrics.length + systemMetrics.length) + ' charts');
+            });
         `;
     }
 
