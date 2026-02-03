@@ -129,6 +129,49 @@ export function getChartStyles(): string {
             gap: 8px;
         }
 
+        .ai-context-btn {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            padding: 6px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+            position: relative;
+        }
+
+        .ai-context-btn:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        .ai-context-menu {
+            position: absolute;
+            background: var(--vscode-menu-background);
+            border: 1px solid var(--vscode-menu-border);
+            border-radius: 3px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            z-index: 1000;
+            margin-top: 2px;
+            min-width: 180px;
+            right: 0;
+        }
+
+        .ai-context-menu button {
+            display: block;
+            width: 100%;
+            padding: 8px 16px;
+            text-align: left;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            color: var(--vscode-menu-foreground);
+            font-size: 13px;
+        }
+
+        .ai-context-menu button:hover {
+            background: var(--vscode-menu-selectionBackground);
+        }
+
         .tabs {
             display: flex;
             gap: 4px;
@@ -305,6 +348,7 @@ export function getChartScript(): string {
         let logY = false;
         let modalLogX = false;
         let modalLogY = false;
+        let aiContextMenuOpen = false;
 
         // ==================== CORE FUNCTIONS ====================
 
@@ -579,6 +623,29 @@ export function getChartScript(): string {
             });
         }
 
+        function showAIContextMenu(event) {
+            if (event) {
+                event.stopPropagation();
+            }
+            const menu = document.getElementById('aiContextMenu');
+            aiContextMenuOpen = !aiContextMenuOpen;
+            menu.style.display = aiContextMenuOpen ? 'block' : 'none';
+        }
+
+        function generateAIContext(action) {
+            vscode.postMessage({ command: 'generateAIContext', action: action });
+            document.getElementById('aiContextMenu').style.display = 'none';
+            aiContextMenuOpen = false;
+        }
+
+        // Close AI context menu when clicking outside
+        document.addEventListener('click', (e) => {
+            if (aiContextMenuOpen && !e.target.closest('.ai-context-btn') && !e.target.closest('.ai-context-menu')) {
+                document.getElementById('aiContextMenu').style.display = 'none';
+                aiContextMenuOpen = false;
+            }
+        });
+
         // ==================== MODAL CONTROLS ====================
 
         function updateModalSmoothing() {
@@ -657,6 +724,15 @@ export function getControlsBarHtml(): string {
                 <div class="axis-toggles">
                     <button class="toggle-btn" id="logXBtn" onclick="toggleLogAxis('x')">Log X</button>
                     <button class="toggle-btn" id="logYBtn" onclick="toggleLogAxis('y')">Log Y</button>
+                </div>
+            </div>
+            <div class="control-group" style="margin-left: auto;">
+                <button class="ai-context-btn" onclick="showAIContextMenu(event)">
+                    🤖 Generate AI Context ▼
+                </button>
+                <div class="ai-context-menu" id="aiContextMenu" style="display:none">
+                    <button onclick="generateAIContext('copy')">Copy to Clipboard</button>
+                    <button onclick="generateAIContext('save')">Save to File...</button>
                 </div>
             </div>
         </div>

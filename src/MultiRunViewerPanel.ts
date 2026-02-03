@@ -4,6 +4,7 @@ import * as path from 'path';
 import { MultiRunManager, MergedMetric } from './MultiRunManager';
 import { scanFolderForRuns, watchFolder, FileChangeEvent, RunScanResult } from './MultiRunScanner';
 import { getChartStyles, getChartScript, getModalHtml, getControlsBarHtml } from './chartTemplate';
+import { generateAIContext, calculateTokenEstimate } from './aiContext/ContextGenerator';
 
 export class MultiRunViewerPanel {
     public static currentPanel: MultiRunViewerPanel | undefined;
@@ -43,7 +44,7 @@ export class MultiRunViewerPanel {
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
 
         this._panel.webview.onDidReceiveMessage(
-            message => {
+            async message => {
                 switch (message.command) {
                     case 'toggleRun':
                         this._manager.toggleRun(message.runId);
@@ -59,6 +60,9 @@ export class MultiRunViewerPanel {
                         break;
                     case 'refreshRuns':
                         this._update();
+                        break;
+                    case 'generateAIContext':
+                        await this._handleGenerateAIContext(message.action);
                         break;
                 }
             },
@@ -830,6 +834,58 @@ export class MultiRunViewerPanel {
             };
             return entities[char] || char;
         });
+    }
+
+    private async _handleGenerateAIContext(action: string) {
+        // Get selected runs
+        const selectedRuns = this._manager.getRuns()
+            .filter(r => this._manager.isRunSelected(r.runId));
+
+        if (selectedRuns.length === 0) {
+            vscode.window.showWarningMessage('Please select at least one run to generate AI context.');
+            return;
+        }
+
+        // Generate the AI context
+        try {
+            const context = generateAIContext(
+                selectedRuns,
+                this._manager.getState().parsedData,
+                this._folderPath
+            );
+
+            if (action === 'copy') {
+                // Copy to clipboard
+                await vscode.env.clipboard.writeText(context);
+                const tokens = calculateTokenEstimate(context);
+                vscode.window.showInformationMessage(
+                    `Context copied to clipboard (${tokens} tokens)`
+                );
+            } else if (action === 'save') {
+                // Save to file
+                const uri = await vscode.window.showSaveDialog({
+                    defaultUri: vscode.Uri.file(path.join(this._folderPath, 'wandb-context.md')),
+                    filters: {
+                        'Markdown': ['md'],
+                        'MCD': ['mdc'],
+                        'All Files': ['*']
+                    }
+                });
+
+                if (uri) {
+                    await vscode.workspace.fs.writeFile(uri, Buffer.from(context, 'utf8'));
+                    const tokens = calculateTokenEstimate(context);
+                    vscode.window.showInformationMessage(
+                        `Context saved to ${path.basename(uri.fsPath)} (${tokens} tokens)`
+                    );
+                }
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(
+                `Failed to generate AI context: ${error instanceof Error ? error.message : String(error)}`
+            );
+            console.error('Error generating AI context:', error);
+        }
     }
 
     public dispose() {
