@@ -41,25 +41,33 @@ export function summarizeMetric(data: MetricPoint[]): MetricSummary | null {
 
 /**
  * Detect anomalies in metric values
- * Returns a warning string if anomaly found, undefined otherwise
+ * Returns a warning string listing all anomalies found, undefined if none
  */
 function detectAnomaly(values: number[]): string | undefined {
+    const anomalies: string[] = [];
+
     // Check for NaN/Inf
-    const nanIndex = values.findIndex(v => !isFinite(v));
-    if (nanIndex !== -1) {
-        return `⚠️ NaN/Inf at step ${nanIndex}`;
+    const nanIndices = values
+        .map((v, i) => !isFinite(v) ? i : -1)
+        .filter(i => i !== -1);
+    if (nanIndices.length > 0) {
+        anomalies.push(`NaN/Inf at steps ${nanIndices.join(', ')}`);
     }
 
     // Check for major spikes (value > 2x previous, ignoring near-zero values)
+    const spikeIndices: number[] = [];
     for (let i = 1; i < values.length; i++) {
         const prev = Math.abs(values[i - 1]);
         const curr = Math.abs(values[i]);
         if (prev > 0.01 && curr > 2 * prev) {
-            return `⚠️ Spike at step ${i}`;
+            spikeIndices.push(i);
         }
     }
+    if (spikeIndices.length > 0) {
+        anomalies.push(`Spikes at steps ${spikeIndices.join(', ')}`);
+    }
 
-    return undefined;
+    return anomalies.length > 0 ? `⚠️ ${anomalies.join('; ')}` : undefined;
 }
 
 /**
