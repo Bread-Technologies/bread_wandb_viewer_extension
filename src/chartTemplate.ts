@@ -418,10 +418,23 @@ export function getChartScript(): string {
                                 color: '#aaa',
                                 font: { size: options.isModal ? 12 : 11 },
                                 callback: function(value) {
+                                    const decimals = options.isModal ? 4 : 2;
+                                    
+                                    // Always use exponential for very small or very large numbers
                                     if (Math.abs(value) < 0.001 || Math.abs(value) > 10000) {
                                         return value.toExponential(2);
                                     }
-                                    return value.toFixed(options.isModal ? 4 : 2);
+                                    
+                                    // For values in normal range, check if toFixed would show significant digits
+                                    const formatted = value.toFixed(decimals);
+                                    const asNumber = parseFloat(formatted);
+                                    
+                                    // If toFixed rounds to zero but value isn't actually zero, use exponential
+                                    if (asNumber === 0 && value !== 0) {
+                                        return value.toExponential(2);
+                                    }
+                                    
+                                    return formatted;
                                 }
                             }
                         }
