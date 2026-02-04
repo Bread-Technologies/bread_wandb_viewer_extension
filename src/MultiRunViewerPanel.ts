@@ -4,6 +4,10 @@ import * as path from 'path';
 import { MultiRunManager, MergedMetric } from './MultiRunManager';
 import { scanFolderForRuns, watchFolder, FileChangeEvent, RunScanResult } from './MultiRunScanner';
 import { getChartStyles, getChartScript, getModalHtml, getControlsBarHtml } from './chartTemplate';
+import { generateAIContext, calculateTokenEstimate } from './aiContext/ContextGenerator';
+import { TelemetryService } from './telemetry/TelemetryService';
+import { isTelemetryConfigured } from './telemetry/config';
+import { bucketRunCount, bucketTokenCount } from './telemetry/helpers';
 
 export class MultiRunViewerPanel {
     public static currentPanel: MultiRunViewerPanel | undefined;
@@ -50,22 +54,68 @@ export class MultiRunViewerPanel {
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
 
         this._panel.webview.onDidReceiveMessage(
-            message => {
+            async message => {
                 switch (message.command) {
                     case 'toggleRun':
+                        const wasSelected = this._manager.isRunSelected(message.runId);
                         this._manager.toggleRun(message.runId);
+
+                        // Track run toggle
+                        if (isTelemetryConfigured()) {
+                            const selectedCount = this._manager.getSelectedRunIds().length;
+                            TelemetryService.getInstance().sendEvent('multiRun.runToggled', {
+                                action: wasSelected ? 'deselected' : 'selected',
+                                totalSelected: bucketRunCount(selectedCount),
+                                method: 'checkbox'
+                            });
+                        }
+
                         this._update();
                         break;
                     case 'selectAll':
                         this._manager.selectAll();
+
+                        // Track select all
+                        if (isTelemetryConfigured()) {
+                            const selectedCount = this._manager.getSelectedRunIds().length;
+                            TelemetryService.getInstance().sendEvent('multiRun.runToggled', {
+                                action: 'selected',
+                                totalSelected: bucketRunCount(selectedCount),
+                                method: 'selectAll'
+                            });
+                        }
+
                         this._update();
                         break;
                     case 'deselectAll':
                         this._manager.deselectAll();
+
+                        // Track deselect all
+                        if (isTelemetryConfigured()) {
+                            TelemetryService.getInstance().sendEvent('multiRun.runToggled', {
+                                action: 'deselected',
+                                totalSelected: '0',
+                                method: 'deselectAll'
+                            });
+                        }
+
                         this._update();
                         break;
                     case 'refreshRuns':
                         this._update();
+                        break;
+                    case 'generateAIContext':
+                        await this._handleGenerateAIContext(message.action);
+                        break;
+                    case 'telemetry':
+                        // Handle telemetry events from webview
+                        if (isTelemetryConfigured()) {
+                            TelemetryService.getInstance().sendEvent(
+                                message.eventName,
+                                message.properties || {},
+                                message.measurements || {}
+                            );
+                        }
                         break;
                 }
             },
@@ -85,7 +135,17 @@ export class MultiRunViewerPanel {
 
         const t1 = Date.now();
         const runs = await scanFolderForRuns(this._folderPath);
-        console.log(`[1] Folder scan: ${Date.now() - t1}ms (found ${runs.length} runs)`);
+        const scanTime = Date.now() - t1;
+        console.log(`[1] Folder scan: ${scanTime}ms (found ${runs.length} runs)`);
+
+        // Track scan completion
+        if (isTelemetryConfigured()) {
+            TelemetryService.getInstance().sendEvent('multiRun.scanCompleted', {
+                runCount: bucketRunCount(runs.length)
+            }, {
+                scanTimeMs: scanTime
+            });
+        }
 
         // Update manager with new runs
         const t2 = Date.now();
@@ -403,7 +463,16 @@ export class MultiRunViewerPanel {
                 sidebar.classList.toggle('collapsed');
                 const collapseBtn = document.getElementById('collapseBtn');
                 const expandBtn = document.getElementById('expandBtn');
-                if (sidebar.classList.contains('collapsed')) {
+                const isCollapsed = sidebar.classList.contains('collapsed');
+
+                // Track sidebar toggle
+                vscode.postMessage({
+                    command: 'telemetry',
+                    eventName: 'ui.sidebarToggled',
+                    properties: { state: isCollapsed ? 'collapsed' : 'expanded' }
+                });
+
+                if (isCollapsed) {
                     collapseBtn.style.display = 'none';
                     expandBtn.style.display = 'block';
                 } else {
@@ -416,6 +485,13 @@ export class MultiRunViewerPanel {
             function switchSidebarTab(tab) {
                 const tabs = document.querySelectorAll('.sidebar-tab');
                 const contents = document.querySelectorAll('.sidebar-content');
+
+                // Track sidebar tab switching
+                vscode.postMessage({
+                    command: 'telemetry',
+                    eventName: 'ui.sidebarTabSwitched',
+                    properties: { tab: tab }
+                });
 
                 tabs.forEach(t => t.classList.remove('active'));
                 contents.forEach(c => c.classList.remove('active'));
@@ -453,6 +529,13 @@ export class MultiRunViewerPanel {
                 const metrics = type === 'training' ? trainingMetrics : systemMetrics;
                 const metric = metrics[metricIndex];
                 if (!metric) return;
+
+                // Track fullscreen modal opening
+                vscode.postMessage({
+                    command: 'telemetry',
+                    eventName: 'chart.fullscreenOpened',
+                    properties: { metricType: type }
+                });
 
                 document.getElementById('modalTitle').textContent = metric.metricName;
                 document.getElementById('fullscreenModal').classList.add('active');
@@ -869,6 +952,93 @@ export class MultiRunViewerPanel {
         }
         
         return this._escapeHtml(String(value));
+    }
+
+    private async _handleGenerateAIContext(action: string) {
+        // Get selected runs
+        const selectedRuns = this._manager.getRuns()
+            .filter(r => this._manager.isRunSelected(r.runId));
+
+        if (selectedRuns.length === 0) {
+            vscode.window.showWarningMessage('Please select at least one run to generate AI context.');
+            return;
+        }
+
+        // Generate the AI context
+        try {
+            const context = generateAIContext(
+                selectedRuns,
+                this._manager.getState().parsedData,
+                this._folderPath
+            );
+            const tokens = calculateTokenEstimate(context);
+
+            // Track AI context generation
+            if (isTelemetryConfigured()) {
+                TelemetryService.getInstance().sendEvent('aiContext.generated', {
+                    selectedRunCount: bucketRunCount(selectedRuns.length),
+                    tokenEstimate: bucketTokenCount(tokens),
+                    action: action
+                });
+            }
+
+            if (action === 'copy') {
+                // Copy to clipboard
+                await vscode.env.clipboard.writeText(context);
+
+                // Track copy action
+                if (isTelemetryConfigured()) {
+                    TelemetryService.getInstance().sendEvent('aiContext.copied', {
+                        tokenEstimate: bucketTokenCount(tokens),
+                        selectedRunCount: bucketRunCount(selectedRuns.length)
+                    });
+                }
+
+                vscode.window.showInformationMessage(
+                    `Context copied to clipboard (${tokens} tokens)`
+                );
+            } else if (action === 'save') {
+                // Save to file
+                const uri = await vscode.window.showSaveDialog({
+                    defaultUri: vscode.Uri.file(path.join(this._folderPath, 'wandb-context.md')),
+                    filters: {
+                        'Markdown': ['md'],
+                        'MCD': ['mdc'],
+                        'All Files': ['*']
+                    }
+                });
+
+                if (uri) {
+                    await vscode.workspace.fs.writeFile(uri, Buffer.from(context, 'utf8'));
+
+                    // Track save action
+                    if (isTelemetryConfigured()) {
+                        const ext = path.extname(uri.fsPath).slice(1) || 'md';
+                        TelemetryService.getInstance().sendEvent('aiContext.saved', {
+                            tokenEstimate: bucketTokenCount(tokens),
+                            selectedRunCount: bucketRunCount(selectedRuns.length),
+                            fileExtension: ext
+                        });
+                    }
+
+                    vscode.window.showInformationMessage(
+                        `Context saved to ${path.basename(uri.fsPath)} (${tokens} tokens)`
+                    );
+                }
+            }
+        } catch (error) {
+            // Track error
+            if (isTelemetryConfigured()) {
+                TelemetryService.getInstance().sendError('aiContext.error', error as Error, {
+                    selectedRunCount: bucketRunCount(selectedRuns.length)
+                });
+            }
+
+            vscode.window.showErrorMessage(
+                `Failed to generate AI context: ${error instanceof Error ? error.message : String(error)}`
+            );
+            console.error('Error generating AI context:', error);
+        }
     }
 
     private _getLoadingHtml(): string {
