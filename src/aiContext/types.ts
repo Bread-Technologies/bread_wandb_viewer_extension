@@ -17,6 +17,7 @@ export interface MetricSummary {
     mean: number;
     trend: '↑' | '↓' | '→' | '~';
     convergenceStep?: number;
+    anomaly?: string;
 }
 
 export interface ConfigComparison {

@@ -22,6 +22,9 @@ export function summarizeMetric(data: MetricPoint[]): MetricSummary | null {
     const max = Math.max(...values);
     const mean = values.reduce((a, b) => a + b, 0) / values.length;
 
+    // Anomaly detection
+    const anomaly = detectAnomaly(values);
+
     // Trend detection
     const trend = detectTrend(data);
 
@@ -31,8 +34,32 @@ export function summarizeMetric(data: MetricPoint[]): MetricSummary | null {
         min,
         max,
         mean,
-        trend
+        trend,
+        anomaly
     };
+}
+
+/**
+ * Detect anomalies in metric values
+ * Returns a warning string if anomaly found, undefined otherwise
+ */
+function detectAnomaly(values: number[]): string | undefined {
+    // Check for NaN/Inf
+    const nanIndex = values.findIndex(v => !isFinite(v));
+    if (nanIndex !== -1) {
+        return `⚠️ NaN/Inf at step ${nanIndex}`;
+    }
+
+    // Check for major spikes (value > 2x previous, ignoring near-zero values)
+    for (let i = 1; i < values.length; i++) {
+        const prev = Math.abs(values[i - 1]);
+        const curr = Math.abs(values[i]);
+        if (prev > 0.01 && curr > 2 * prev) {
+            return `⚠️ Spike at step ${i}`;
+        }
+    }
+
+    return undefined;
 }
 
 /**
@@ -115,11 +142,12 @@ export function formatMetricSummary(
         return `- **${runName}**: No data\n`;
     }
 
+    const anomalyStr = summary.anomaly ? ` ${summary.anomaly}` : '';
     return `- **${runName}**: initial=${formatNumber(summary.initial)}, ` +
            `final=${formatNumber(summary.final)}, ` +
            `min=${formatNumber(summary.min)}, ` +
            `max=${formatNumber(summary.max)}, ` +
-           `trend=${summary.trend}\n`;
+           `trend=${summary.trend}${anomalyStr}\n`;
 }
 
 /**
