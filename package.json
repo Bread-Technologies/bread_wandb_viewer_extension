@@ -31,7 +31,18 @@
     "model training",
     "experiment tracking",
     "offline viewer",
-    "protobuf"
+    "protobuf",
+    "data visualization",
+    "data science",
+    "machine learning",
+    "ml", 
+    "deep learning",
+    "pytorch",
+    "tensorflow",
+    "training metrics",
+    "visualization",
+    "open source",
+    "training"
   ],
   "activationEvents": [
     "onCustomEditor:wandb-viewer.wandbFile",
