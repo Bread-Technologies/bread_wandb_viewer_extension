@@ -39,7 +39,14 @@ export class MultiRunViewerPanel {
         this._folderPath = folderPath;
         this._manager = new MultiRunManager(folderPath);
 
-        this._update();
+        // Show loading screen immediately
+        this._panel.webview.html = this._getLoadingHtml();
+        
+        // Defer the actual work so loading spinner can render
+        setTimeout(() => {
+            this._update();
+        }, 50); // 50ms delay allows the loading screen to paint
+        
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
 
         this._panel.webview.onDidReceiveMessage(
@@ -524,6 +531,9 @@ export class MultiRunViewerPanel {
                                 enableZoom: false
                             });
 
+                            // Apply current global smoothing to newly created chart
+                            updateChartSmoothing(chartInstances[canvasId], globalSmoothing, showRaw);
+
                             // Stop observing this chart
                             chartObserver.unobserve(canvas);
                         });
@@ -830,6 +840,55 @@ export class MultiRunViewerPanel {
             };
             return entities[char] || char;
         });
+    }
+
+    private _getLoadingHtml(): string {
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading...</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background: var(--vscode-editor-background);
+            color: var(--vscode-foreground);
+            font-family: var(--vscode-font-family);
+        }
+        .loading-container {
+            text-align: center;
+        }
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid var(--vscode-progressBar-background, #333);
+            border-top-color: var(--vscode-progressBar-background, #007acc);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .loading-text {
+            font-size: 14px;
+            color: var(--vscode-descriptionForeground);
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-container">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading W&B runs...</div>
+    </div>
+</body>
+</html>`;
     }
 
     public dispose() {
