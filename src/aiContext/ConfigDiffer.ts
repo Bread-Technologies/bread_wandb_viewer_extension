@@ -122,7 +122,7 @@ function formatValue(value: any): string {
         return 'null';
     }
     if (typeof value === 'string') {
-        return value.length > 40 ? value.substring(0, 37) + '...' : value;
+        return value.length > 100 ? value.substring(0, 97) + '...' : value;
     }
     if (typeof value === 'number') {
         return formatNumber(value);
@@ -139,7 +139,7 @@ function formatValue(value: any): string {
     }
     if (typeof value === 'object') {
         const str = JSON.stringify(value);
-        return str.length > 40 ? str.substring(0, 37) + '...' : str;
+        return str.length > 100 ? str.substring(0, 97) + '...' : str;
     }
     return String(value);
 }

@@ -51,11 +51,27 @@ function detectTrend(data: MetricPoint[]): '↑' | '↓' | '→' | '~' {
 
     const firstMean = mean(firstHalf);
     const secondMean = mean(secondHalf);
-    const change = (secondMean - firstMean) / Math.abs(firstMean);
+
+    // Check for constant metric (near-zero variance in both halves)
+    const epsilon = 1e-10;
+    const maxVar = Math.max(variance(firstHalf), variance(secondHalf));
+    if (maxVar < epsilon) {
+        return '→'; // Constant metric
+    }
+
+    // Safe division with epsilon guard to avoid NaN when firstMean is 0
+    const denominator = Math.max(Math.abs(firstMean), epsilon);
+    const change = (secondMean - firstMean) / denominator;
+
+    // Handle NaN/Inf from any edge case
+    if (!isFinite(change)) {
+        return '→';
+    }
 
     // Check for convergence (low variance in second half)
     const secondVar = variance(secondHalf);
-    if (secondVar < 0.01 * Math.abs(secondMean)) {
+    const threshold = Math.max(0.01 * Math.abs(secondMean), epsilon);
+    if (secondVar < threshold) {
         return '~'; // Converged
     }
 
