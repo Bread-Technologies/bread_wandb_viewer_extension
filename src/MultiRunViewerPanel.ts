@@ -40,7 +40,14 @@ export class MultiRunViewerPanel {
         this._folderPath = folderPath;
         this._manager = new MultiRunManager(folderPath);
 
-        this._update();
+        // Show loading screen immediately
+        this._panel.webview.html = this._getLoadingHtml();
+        
+        // Defer the actual work so loading spinner can render
+        setTimeout(() => {
+            this._update();
+        }, 50); // 50ms delay allows the loading screen to paint
+        
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
 
         this._panel.webview.onDidReceiveMessage(
@@ -177,7 +184,7 @@ export class MultiRunViewerPanel {
                                 ${configEntries.map(([key, value]) => `
                                     <div class="config-item">
                                         <span class="config-key">${this._escapeHtml(key)}:</span>
-                                        <span class="config-value">${this._escapeHtml(String(value))}</span>
+                                        <span class="config-value">${this._formatConfigValue(value)}</span>
                                     </div>
                                 `).join('')}
                             </div>
@@ -528,6 +535,9 @@ export class MultiRunViewerPanel {
                                 enableZoom: false
                             });
 
+                            // Apply current global smoothing to newly created chart
+                            updateChartSmoothing(chartInstances[canvasId], globalSmoothing, showRaw);
+
                             // Stop observing this chart
                             chartObserver.unobserve(canvas);
                         });
@@ -748,6 +758,13 @@ export class MultiRunViewerPanel {
                 color: var(--vscode-foreground);
                 margin-left: 8px;
             }
+            .config-value pre {
+                background: var(--vscode-textCodeBlock-background);
+                padding: 8px;
+                border-radius: 3px;
+                border: 1px solid var(--vscode-panel-border);
+                overflow-x: auto;
+            }
             .no-config, .no-data {
                 padding: 15px;
                 text-align: center;
@@ -836,6 +853,28 @@ export class MultiRunViewerPanel {
         });
     }
 
+    private _formatConfigValue(value: any): string {
+        if (value === null || value === undefined) {
+            return '<span style="color: var(--vscode-descriptionForeground);">null</span>';
+        }
+        
+        if (typeof value === 'string') {
+            return this._escapeHtml(value);
+        }
+        
+        if (typeof value === 'number' || typeof value === 'boolean') {
+            return String(value);
+        }
+        
+        if (typeof value === 'object') {
+            // Format objects and arrays with indentation
+            const json = JSON.stringify(value, null, 2);
+            return `<pre style="margin: 4px 0; font-family: var(--vscode-editor-font-family); font-size: 0.9em; white-space: pre-wrap; word-break: break-all;">${this._escapeHtml(json)}</pre>`;
+        }
+        
+        return this._escapeHtml(String(value));
+    }
+
     private async _handleGenerateAIContext(action: string) {
         // Get selected runs
         const selectedRuns = this._manager.getRuns()
@@ -886,6 +925,55 @@ export class MultiRunViewerPanel {
             );
             console.error('Error generating AI context:', error);
         }
+    }
+
+    private _getLoadingHtml(): string {
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading...</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background: var(--vscode-editor-background);
+            color: var(--vscode-foreground);
+            font-family: var(--vscode-font-family);
+        }
+        .loading-container {
+            text-align: center;
+        }
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid var(--vscode-progressBar-background, #333);
+            border-top-color: var(--vscode-progressBar-background, #007acc);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .loading-text {
+            font-size: 14px;
+            color: var(--vscode-descriptionForeground);
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-container">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading W&B runs...</div>
+    </div>
+</body>
+</html>`;
     }
 
     public dispose() {
