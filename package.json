@@ -14,7 +14,24 @@
   },
   "categories": [
     "Visualization",
-    "Other"
+    "Machine Learning",
+    "Data Science"
+  ],
+  "keywords": [
+    "wandb",
+    "weights and biases",
+    "machine learning",
+    "ml",
+    "deep learning",
+    "pytorch",
+    "tensorflow",
+    "training metrics",
+    "visualization",
+    "ai",
+    "model training",
+    "experiment tracking",
+    "offline viewer",
+    "protobuf"
   ],
   "activationEvents": [
     "onCustomEditor:wandb-viewer.wandbFile",
