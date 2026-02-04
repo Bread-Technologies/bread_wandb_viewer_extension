@@ -43,6 +43,30 @@ code --install-extension wandb-viewer-0.2.1.vsix
 - Works completely offline
 - Tested with wandb SDK 0.15+ file format
 
+## Privacy & Analytics
+
+This extension collects anonymous usage analytics to help improve the product. We track:
+
+**What we collect:**
+- Feature usage (which features you use)
+- Performance metrics (parse times, load times)
+- Error events (crashes and bugs)
+- Chart interactions (smoothing, zoom, log scale)
+
+**What we DO NOT collect:**
+- ❌ Run names or project names
+- ❌ Metric values or training data
+- ❌ File paths or code
+- ❌ Hyperparameters or configurations
+- ❌ Any personally identifiable information (PII)
+
+**How to opt out:**
+1. Open VS Code Settings (`Cmd+,` or `Ctrl+,`)
+2. Search for "telemetry"
+3. Set **Telemetry Level** to "off"
+
+The extension respects VS Code's global telemetry setting. Learn more in our [telemetry documentation](https://github.com/Bread-Technologies/bread_wandb_viewer_extension/blob/main/src/telemetry/TelemetryService.ts).
+
 ## Issues?
 
 Open an issue on GitHub. PRs welcome.
