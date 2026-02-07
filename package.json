@@ -42,7 +42,12 @@
     "training metrics",
     "visualization",
     "open source",
-    "training"
+    "training",
+    "ml ops",
+    "mlops",
+    "ml operations",
+    "ml engineering",
+    "machine learning engineering"
   ],
   "activationEvents": [
     "onCustomEditor:wandb-viewer.wandbFile",

@@ -172,6 +172,38 @@ export function getChartStyles(): string {
             background: var(--vscode-menu-selectionBackground);
         }
 
+        .capture-status {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-focusBorder);
+            padding: 20px 30px;
+            border-radius: 8px;
+            z-index: 2000;
+            text-align: center;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            font-size: 14px;
+            color: var(--vscode-foreground);
+        }
+
+        .capture-status .spinner-small {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--vscode-foreground);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
         .tabs {
             display: flex;
             gap: 4px;
@@ -228,6 +260,11 @@ export function getChartStyles(): string {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 10px;
+        }
+
+        .chart-actions {
+            display: flex;
+            gap: 4px;
         }
 
         .chart-title, .metric-title {
@@ -348,7 +385,8 @@ export function getChartScript(): string {
         let logY = false;
         let modalLogX = false;
         let modalLogY = false;
-        let aiContextMenuOpen = false;
+        let textContextMenuOpen = false;
+        let chartImageMenuOpen = false;
 
         // ==================== CORE FUNCTIONS ====================
 
@@ -679,28 +717,375 @@ export function getChartScript(): string {
             }
         }
 
-        function showAIContextMenu(event) {
-            if (event) {
-                event.stopPropagation();
+        function closeAllMenus() {
+            document.getElementById('textContextMenu').style.display = 'none';
+            document.getElementById('chartImageMenu').style.display = 'none';
+            textContextMenuOpen = false;
+            chartImageMenuOpen = false;
+        }
+
+        function showTextContextMenu(event) {
+            if (event) event.stopPropagation();
+            const wasOpen = textContextMenuOpen;
+            closeAllMenus();
+            if (!wasOpen) {
+                document.getElementById('textContextMenu').style.display = 'block';
+                textContextMenuOpen = true;
             }
-            const menu = document.getElementById('aiContextMenu');
-            aiContextMenuOpen = !aiContextMenuOpen;
-            menu.style.display = aiContextMenuOpen ? 'block' : 'none';
+        }
+
+        function showChartImageMenu(event) {
+            if (event) event.stopPropagation();
+            const wasOpen = chartImageMenuOpen;
+            closeAllMenus();
+            if (!wasOpen) {
+                document.getElementById('chartImageMenu').style.display = 'block';
+                chartImageMenuOpen = true;
+            }
         }
 
         function generateAIContext(action) {
             vscode.postMessage({ command: 'generateAIContext', action: action });
-            document.getElementById('aiContextMenu').style.display = 'none';
-            aiContextMenuOpen = false;
+            closeAllMenus();
         }
 
-        // Close AI context menu when clicking outside
+        // Close menus when clicking outside
         document.addEventListener('click', (e) => {
-            if (aiContextMenuOpen && !e.target.closest('.ai-context-btn') && !e.target.closest('.ai-context-menu')) {
-                document.getElementById('aiContextMenu').style.display = 'none';
-                aiContextMenuOpen = false;
+            if ((textContextMenuOpen || chartImageMenuOpen) && !e.target.closest('.ai-context-btn') && !e.target.closest('.ai-context-menu')) {
+                closeAllMenus();
             }
         });
+
+        // ==================== HIGH-LEVERAGE METRIC DETECTION ====================
+
+        const HIGH_LEVERAGE_PATTERNS = [
+            /loss/i,
+            /\\bacc(uracy)?\\b/i,
+            /perplexity/i,
+            /\\bppl\\b/i,
+            /\\blr\\b/i,
+            /learning.?rate/i,
+            /grad(ient)?.?norm/i,
+            /\\bf1\\b/i,
+            /\\bprecision\\b/i,
+            /\\brecall\\b/i,
+            /\\bbleu\\b/i,
+            /\\brouge\\b/i,
+            /\\breward\\b/i,
+            /\\bmse\\b/i,
+            /\\bmae\\b/i,
+            /\\brmse\\b/i,
+            /\\bauc\\b/i,
+            /\\bwer\\b/i,
+            /\\bcer\\b/i
+        ];
+
+        function isHighLeverageMetric(metricName) {
+            return HIGH_LEVERAGE_PATTERNS.some(pattern => pattern.test(metricName));
+        }
+
+        // ==================== SINGLE CHART COPY ====================
+
+        async function copySingleChart(type, index) {
+            const canvasId = 'chart-' + type + '-' + index;
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+
+            // Force-render if not yet lazily initialized
+            if (!chartInstances[canvasId]) {
+                const metrics = type === 'training' ? trainingMetrics : systemMetrics;
+                const metric = metrics[index];
+                if (!metric) return;
+
+                const datasets = metric.datasets.map(dataset => ({
+                    label: dataset.runName,
+                    data: dataset.data.map(d => ({ x: d.step, y: d.value })),
+                    borderColor: dataset.color,
+                    backgroundColor: dataset.color + '20',
+                    fill: true,
+                    tension: 0.1,
+                    pointRadius: dataset.data.length > 50 ? 0 : 2,
+                    pointHoverRadius: 4,
+                    borderWidth: 2,
+                    _originalData: dataset.data.map(d => ({ x: d.step, y: d.value })),
+                    _originalColor: dataset.color,
+                    _runName: dataset.runName,
+                    _isOriginal: true
+                }));
+
+                chartInstances[canvasId] = createUnifiedChart(canvas, datasets, metric.metricName, {
+                    isModal: false, enableZoom: false
+                });
+                updateChartSmoothing(chartInstances[canvasId], globalSmoothing, showRaw);
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            }
+
+            const chart = chartInstances[canvasId];
+            if (!chart) return;
+
+            const btn = canvas.closest('.chart-container').querySelector('.btn-copy-chart');
+
+            try {
+                const dataUrl = chart.toBase64Image('image/png');
+                await copyImageToClipboard(dataUrl);
+
+                // Visual feedback
+                if (btn) {
+                    const orig = btn.textContent;
+                    btn.textContent = '\\u2713';
+                    setTimeout(() => { btn.textContent = orig; }, 1500);
+                }
+            } catch (err) {
+                const dataUrl = chart.toBase64Image('image/png');
+                const base64Data = dataUrl.split(',')[1];
+                vscode.postMessage({ command: 'copyChartImageFallback', imageBase64: base64Data });
+            }
+
+            vscode.postMessage({
+                command: 'telemetry',
+                eventName: 'chartImage.singleCopied',
+                properties: { metricType: type }
+            });
+        }
+
+        // ==================== CHART IMAGE CAPTURE ====================
+
+        async function captureChartImages(action, keyOnly) {
+            closeAllMenus();
+
+            // Show status overlay
+            const statusEl = document.createElement('div');
+            statusEl.className = 'capture-status';
+            statusEl.id = 'captureStatus';
+            statusEl.innerHTML = '<span class="spinner-small"></span> Preparing charts...';
+            document.body.appendChild(statusEl);
+
+            try {
+                // Temporarily reveal all tab contents so we capture charts from all tabs
+                const allTabContents = document.querySelectorAll('.tab-content');
+                const originalDisplay = [];
+                allTabContents.forEach(tc => {
+                    originalDisplay.push(tc.style.display);
+                    tc.style.display = 'block';
+                });
+
+                // Find all chart canvases that are not hidden by the metric filter
+                let allCanvases = Array.from(
+                    document.querySelectorAll('canvas[id^="chart-"]')
+                ).filter(canvas => {
+                    const container = canvas.closest('.chart-container');
+                    return container && !container.classList.contains('hidden');
+                });
+
+                // If keyOnly, filter to high-leverage training metrics only
+                if (keyOnly) {
+                    allCanvases = allCanvases.filter(canvas => {
+                        // Skip system metrics entirely for key charts
+                        if (canvas.dataset.chartType === 'system') return false;
+                        const container = canvas.closest('.chart-container');
+                        const titleEl = container ? container.querySelector('.chart-title') : null;
+                        const title = titleEl ? titleEl.textContent : '';
+                        return isHighLeverageMetric(title);
+                    });
+                }
+
+                if (allCanvases.length === 0) {
+                    // Restore tab visibility
+                    allTabContents.forEach((tc, i) => { tc.style.display = originalDisplay[i]; });
+                    statusEl.remove();
+                    const msg = keyOnly
+                        ? 'No key training metrics found (loss, accuracy, lr, etc). Try "Copy All Charts" instead.'
+                        : 'No visible charts to capture. Check your filter or select some runs.';
+                    vscode.postMessage({ command: 'showWarning', message: msg });
+                    return;
+                }
+
+                // Force-render any charts that haven't been lazily initialized yet
+                for (let i = 0; i < allCanvases.length; i++) {
+                    const canvas = allCanvases[i];
+                    const canvasId = canvas.id;
+
+                    if (!chartInstances[canvasId]) {
+                        const type = canvas.dataset.chartType;
+                        const index = parseInt(canvas.dataset.chartIndex);
+                        const metrics = type === 'training' ? trainingMetrics : systemMetrics;
+                        const metric = metrics[index];
+
+                        if (metric) {
+                            const datasets = metric.datasets.map(dataset => ({
+                                label: dataset.runName,
+                                data: dataset.data.map(d => ({ x: d.step, y: d.value })),
+                                borderColor: dataset.color,
+                                backgroundColor: dataset.color + '20',
+                                fill: true,
+                                tension: 0.1,
+                                pointRadius: dataset.data.length > 50 ? 0 : 2,
+                                pointHoverRadius: 4,
+                                borderWidth: 2,
+                                _originalData: dataset.data.map(d => ({ x: d.step, y: d.value })),
+                                _originalColor: dataset.color,
+                                _runName: dataset.runName,
+                                _isOriginal: true
+                            }));
+
+                            chartInstances[canvasId] = createUnifiedChart(
+                                canvas, datasets, metric.metricName,
+                                { isModal: false, enableZoom: false }
+                            );
+                            updateChartSmoothing(chartInstances[canvasId], globalSmoothing, showRaw);
+                        }
+                    }
+
+                    statusEl.innerHTML = '<span class="spinner-small"></span> Rendering charts... ' + (i + 1) + '/' + allCanvases.length;
+                }
+
+                // Wait for Chart.js to finish rendering
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+                statusEl.innerHTML = '<span class="spinner-small"></span> Compositing image...';
+
+                // Capture each chart image
+                const chartImages = [];
+                for (const canvas of allCanvases) {
+                    const canvasId = canvas.id;
+                    const chart = chartInstances[canvasId];
+                    if (!chart) continue;
+
+                    const container = canvas.closest('.chart-container');
+                    const titleEl = container ? container.querySelector('.chart-title') : null;
+                    const title = titleEl ? titleEl.textContent : canvasId;
+
+                    const imageDataUrl = chart.toBase64Image('image/png');
+                    chartImages.push({ title, imageDataUrl });
+                }
+
+                // Restore tab visibility
+                allTabContents.forEach((tc, i) => { tc.style.display = originalDisplay[i]; });
+
+                if (chartImages.length === 0) {
+                    statusEl.remove();
+                    vscode.postMessage({ command: 'showWarning', message: 'No chart images could be captured.' });
+                    return;
+                }
+
+                // Composite into a grid image
+                const compositeDataUrl = await compositeChartGrid(chartImages);
+
+                if (action === 'copy') {
+                    await copyImageToClipboard(compositeDataUrl);
+                    statusEl.innerHTML = '&#10003; Copied ' + chartImages.length + ' chart(s) to clipboard!';
+                } else if (action === 'save') {
+                    const base64Data = compositeDataUrl.split(',')[1];
+                    vscode.postMessage({
+                        command: 'saveChartImage',
+                        imageBase64: base64Data,
+                        chartCount: chartImages.length
+                    });
+                    statusEl.innerHTML = '&#10003; Saving ' + chartImages.length + ' chart(s)...';
+                }
+
+                // Telemetry
+                vscode.postMessage({
+                    command: 'telemetry',
+                    eventName: 'chartImage.captured',
+                    properties: {
+                        action: action,
+                        chartCount: String(chartImages.length)
+                    }
+                });
+
+                setTimeout(() => {
+                    const el = document.getElementById('captureStatus');
+                    if (el) el.remove();
+                }, 2000);
+
+            } catch (error) {
+                statusEl.innerHTML = '&#10007; Failed: ' + (error.message || String(error));
+                setTimeout(() => statusEl.remove(), 3000);
+
+                vscode.postMessage({
+                    command: 'telemetry',
+                    eventName: 'chartImage.error',
+                    properties: { error: String(error.message || error).substring(0, 100) }
+                });
+            }
+        }
+
+        async function compositeChartGrid(chartImages) {
+            const COLS = Math.min(3, chartImages.length);
+            const ROWS = Math.ceil(chartImages.length / COLS);
+            const CELL_WIDTH = 600;
+            const CELL_HEIGHT = 400;
+            const TITLE_HEIGHT = 30;
+            const PADDING = 20;
+            const MARGIN = 30;
+
+            const totalWidth = MARGIN * 2 + COLS * CELL_WIDTH + Math.max(0, COLS - 1) * PADDING;
+            const totalHeight = MARGIN * 2 + ROWS * (CELL_HEIGHT + TITLE_HEIGHT) + Math.max(0, ROWS - 1) * PADDING;
+
+            const offscreen = document.createElement('canvas');
+            offscreen.width = totalWidth;
+            offscreen.height = totalHeight;
+            const ctx = offscreen.getContext('2d');
+
+            // Match VS Code theme
+            const bgColor = getComputedStyle(document.body).backgroundColor || '#1e1e1e';
+            const fgColor = getComputedStyle(document.body).color || '#d4d4d4';
+            ctx.fillStyle = bgColor;
+            ctx.fillRect(0, 0, totalWidth, totalHeight);
+
+            // Load all chart images
+            const images = await Promise.all(
+                chartImages.map(item => {
+                    return new Promise((resolve, reject) => {
+                        const img = new Image();
+                        img.onload = () => resolve({ img, title: item.title });
+                        img.onerror = reject;
+                        img.src = item.imageDataUrl;
+                    });
+                })
+            );
+
+            // Draw each chart in grid
+            for (let i = 0; i < images.length; i++) {
+                const { img, title } = images[i];
+                const col = i % COLS;
+                const row = Math.floor(i / COLS);
+
+                const x = MARGIN + col * (CELL_WIDTH + PADDING);
+                const y = MARGIN + row * (CELL_HEIGHT + TITLE_HEIGHT + PADDING);
+
+                // Draw title
+                ctx.fillStyle = fgColor;
+                ctx.font = 'bold 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+                ctx.textBaseline = 'top';
+                ctx.fillText(title, x, y);
+
+                // Draw chart image
+                ctx.drawImage(img, x, y + TITLE_HEIGHT, CELL_WIDTH, CELL_HEIGHT);
+            }
+
+            return offscreen.toDataURL('image/png');
+        }
+
+        async function copyImageToClipboard(dataUrl) {
+            const response = await fetch(dataUrl);
+            const blob = await response.blob();
+
+            try {
+                await navigator.clipboard.write([
+                    new ClipboardItem({ 'image/png': blob })
+                ]);
+            } catch (err) {
+                // Fallback: send to extension host for temp file
+                const base64Data = dataUrl.split(',')[1];
+                vscode.postMessage({
+                    command: 'copyChartImageFallback',
+                    imageBase64: base64Data
+                });
+                throw new Error('Clipboard image copy not supported. Image saved to temp file instead.');
+            }
+        }
 
         // ==================== MODAL CONTROLS ====================
 
@@ -822,13 +1207,25 @@ export function getControlsBarHtml(): string {
                     <button class="toggle-btn" id="logYBtn" onclick="toggleLogAxis('y')">Log Y</button>
                 </div>
             </div>
-            <div class="control-group" style="margin-left: auto;">
-                <button class="ai-context-btn" onclick="showAIContextMenu(event)">
-                    🤖 Generate AI Context ▼
-                </button>
-                <div class="ai-context-menu" id="aiContextMenu" style="display:none">
-                    <button onclick="generateAIContext('copy')">Copy to Clipboard</button>
-                    <button onclick="generateAIContext('save')">Save to File...</button>
+            <div class="control-group" style="margin-left: auto; gap: 8px;">
+                <div style="position: relative; display: inline-block;">
+                    <button class="ai-context-btn" onclick="showTextContextMenu(event)">
+                        🤖 Copy Text Context ▼
+                    </button>
+                    <div class="ai-context-menu" id="textContextMenu" style="display:none">
+                        <button onclick="generateAIContext('copy')">Copy to Clipboard</button>
+                        <button onclick="generateAIContext('save')">Save to File...</button>
+                    </div>
+                </div>
+                <div style="position: relative; display: inline-block;">
+                    <button class="ai-context-btn" onclick="showChartImageMenu(event)">
+                        📊 Copy Chart Images ▼
+                    </button>
+                    <div class="ai-context-menu" id="chartImageMenu" style="display:none">
+                        <button onclick="captureChartImages('copy', true)">Copy Key Charts</button>
+                        <button onclick="captureChartImages('copy', false)">Copy All Charts</button>
+                        <button onclick="captureChartImages('save')">Save as PNG...</button>
+                    </div>
                 </div>
             </div>
         </div>

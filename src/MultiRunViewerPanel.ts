@@ -107,6 +107,15 @@ export class MultiRunViewerPanel {
                     case 'generateAIContext':
                         await this._handleGenerateAIContext(message.action);
                         break;
+                    case 'saveChartImage':
+                        await this._handleSaveChartImage(message.imageBase64, message.chartCount);
+                        break;
+                    case 'copyChartImageFallback':
+                        await this._handleCopyChartImageFallback(message.imageBase64);
+                        break;
+                    case 'showWarning':
+                        vscode.window.showWarningMessage(message.message);
+                        break;
                     case 'telemetry':
                         // Handle telemetry events from webview
                         if (isTelemetryConfigured()) {
@@ -341,7 +350,10 @@ export class MultiRunViewerPanel {
                         <div class="chart-container">
                             <div class="chart-header">
                                 <div class="chart-title">${this._escapeHtml(metric.metricName)}</div>
-                                <button class="btn-small" onclick="openFullscreen(${metric.index}, '${type}')">⛶</button>
+                                <div class="chart-actions">
+                                    <button class="btn-small btn-copy-chart" onclick="copySingleChart('${type}', ${metric.index})" title="Copy chart to clipboard">📋</button>
+                                    <button class="btn-small" onclick="openFullscreen(${metric.index}, '${type}')">⛶</button>
+                                </div>
                             </div>
                             <div class="chart-wrapper">
                                 <canvas id="chart-${type}-${metric.index}" data-chart-type="${type}" data-chart-index="${metric.index}"></canvas>
@@ -1038,6 +1050,64 @@ export class MultiRunViewerPanel {
                 `Failed to generate AI context: ${error instanceof Error ? error.message : String(error)}`
             );
             console.error('Error generating AI context:', error);
+        }
+    }
+
+    private async _handleSaveChartImage(imageBase64: string, chartCount: number) {
+        try {
+            const uri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(path.join(this._folderPath, 'wandb-charts.png')),
+                filters: {
+                    'PNG Image': ['png']
+                }
+            });
+
+            if (uri) {
+                const buffer = Buffer.from(imageBase64, 'base64');
+                await vscode.workspace.fs.writeFile(uri, buffer);
+
+                if (isTelemetryConfigured()) {
+                    TelemetryService.getInstance().sendEvent('chartImage.saved', {
+                        chartCount: String(chartCount)
+                    });
+                }
+
+                vscode.window.showInformationMessage(
+                    `Chart image saved to ${path.basename(uri.fsPath)} (${chartCount} charts)`
+                );
+            }
+        } catch (error) {
+            if (isTelemetryConfigured()) {
+                TelemetryService.getInstance().sendError('chartImage.saveError', error as Error);
+            }
+            vscode.window.showErrorMessage(
+                `Failed to save chart image: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
+    }
+
+    private async _handleCopyChartImageFallback(imageBase64: string) {
+        try {
+            const os = require('os');
+            const tmpPath = path.join(os.tmpdir(), `wandb-charts-${Date.now()}.png`);
+            const buffer = Buffer.from(imageBase64, 'base64');
+            fs.writeFileSync(tmpPath, buffer);
+
+            if (isTelemetryConfigured()) {
+                TelemetryService.getInstance().sendEvent('chartImage.fallbackUsed', {});
+            }
+
+            const selection = await vscode.window.showInformationMessage(
+                `Chart image saved to temporary file.`,
+                'Open File'
+            );
+            if (selection === 'Open File') {
+                await vscode.env.openExternal(vscode.Uri.file(tmpPath));
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(
+                'Failed to save chart image. Please use "Save as PNG" instead.'
+            );
         }
     }
 
